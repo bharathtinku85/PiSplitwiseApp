@@ -1,3 +1,35 @@
+#APP PI Authentication    
+
+import streamlit.components.v1 as components
+
+components.html(
+    """
+    <script src="https://sdk.minepi.com/pi-sdk.js"></script>
+    <script>
+    async function initPiSDK() {
+        Pi.init({ version: "2.0" });
+
+        const scopes = ['payments'];
+        function onIncompletePaymentFound(payment) {
+            console.log("Incomplete payment", payment);
+        }
+
+        try {
+            const authResult = await Pi.authenticate(scopes, onIncompletePaymentFound);
+            window.parent.postMessage({type: 'pi_auth', payload: authResult}, "*");
+        } catch (error) {
+            console.error("Auth error:", error);
+        }
+    }
+    initPiSDK();
+    </script>
+    """,
+    height=0  # no visible output, runs in background
+)
+
+
+#APP CODE
+
 import streamlit as st
 import json
 from datetime import datetime
@@ -50,9 +82,13 @@ if selected_group:
             "split": split,
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         }
+        if st.button("💸 Settle with Pi (Mock)"):
+           st.info("🚀 Pi Payment initiated (mock). You can replace this with actual Pi SDK callback using JS.")
 
         st.session_state.groups[selected_group]["expenses"].append(expense)
         st.success("Expense added!")
+
+        
 
     # Display Expenses
     st.markdown("### 📄 Expense History")
