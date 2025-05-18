@@ -1,113 +1,124 @@
-#APP PI Authentication    
+!pip install streamlit pyngrok
 
+import streamlit as st
 import streamlit.components.v1 as components
+import pandas as pd
+from datetime import datetime
 
+# Page configuration
+st.set_page_config(page_title="PiSplit - Splitwise with Pi", layout="wide")
+
+# Inject Pi Wallet JS SDK (runs only in Pi Browser)
 components.html(
     """
-    <script src="https://sdk.minepi.com/pi-sdk.js"></script>
+    <script src='https://sdk.minepi.com/pi-sdk.js'></script>
     <script>
-    async function initPiSDK() {
         Pi.init({ version: "2.0" });
-
         const scopes = ['payments'];
         function onIncompletePaymentFound(payment) {
             console.log("Incomplete payment", payment);
         }
-
-        try {
-            const authResult = await Pi.authenticate(scopes, onIncompletePaymentFound);
-            window.parent.postMessage({type: 'pi_auth', payload: authResult}, "*");
-        } catch (error) {
-            console.error("Auth error:", error);
-        }
-    }
-    initPiSDK();
+        Pi.authenticate(scopes, onIncompletePaymentFound)
+            .then(auth => {
+                window.parent.postMessage({type: 'pi_auth', payload: auth}, "*");
+            })
+            .catch(error => console.error("Auth failed", error));
     </script>
     """,
-    height=0  # no visible output, runs in background
+    height=0
 )
 
-
-#APP CODE
-
-import streamlit as st
-import json
-from datetime import datetime
-
-# Session-based group data
-if 'groups' not in st.session_state:
-    st.session_state.groups = {}
-
-st.title("💸 PiSplit – Splitwise with Pi Coin")
-
-# Sidebar – Group controls
-st.sidebar.header("➕ Create / Select Group")
-group_name = st.sidebar.text_input("Group Name")
-members_input = st.sidebar.text_input("Members (comma-separated)")
-
-if st.sidebar.button("Create Group"):
-    members = [m.strip() for m in members_input.split(",") if m.strip()]
-    st.session_state.groups[group_name] = {
-        "members": members,
-        "expenses": []
+# Sample session data
+if "expenses" not in st.session_state:
+    st.session_state.expenses = []
+if "friends" not in st.session_state:
+    st.session_state.friends = ["Alice", "Bob", "Charlie"]
+if "profile" not in st.session_state:
+    st.session_state.profile = {
+        "name": "Bharath Reddy Ambati",
+        "email": "bharath@example.com",
+        "photo": "https://via.placeholder.com/100",
+        "auth_type": "Pi Network",
+        "notifications": True
     }
-    st.sidebar.success(f"Group '{group_name}' created!")
 
-group_list = list(st.session_state.groups.keys())
-selected_group = st.sidebar.selectbox("Select a group", group_list)
+# Sidebar navigation
+page = st.sidebar.selectbox("Navigate", ["Dashboard", "Friends", "Activity", "Profile"])
 
-# Add Expense
-if selected_group:
-    st.subheader(f"Group: {selected_group}")
-    st.markdown("### ➕ Add Expense")
+# 1. Dashboard
+if page == "Dashboard":
+    st.title("📊 Dashboard")
+    st.markdown("### Payables and Receivables Summary")
 
-    payer = st.selectbox("Who paid?", st.session_state.groups[selected_group]["members"])
-    amount = st.number_input("Amount", min_value=0.0, step=0.01)
-    description = st.text_input("Description")
+    net_balances = {f: 0 for f in st.session_state.friends}
+    for exp in st.session_state.expenses:
+        for user, val in exp["split"].items():
+            net_balances[user] = net_balances.get(user, 0) + val
 
-    if st.button("Add Expense"):
-        members = st.session_state.groups[selected_group]["members"]
-        share = round(amount / len(members), 2)
-        split = {}
-        for m in members:
-            if m == payer:
-                split[m] = round(amount - share, 2) * -1
-            else:
-                split[m] = share
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Receivables")
+        for user, val in net_balances.items():
+            if val < 0:
+                st.markdown(f"- {user} owes ₹{abs(val):.2f}")
+    with col2:
+        st.subheader("Payables")
+        for user, val in net_balances.items():
+            if val > 0:
+                st.markdown(f"- You owe {user} ₹{val:.2f}")
 
-        expense = {
-            "payer": payer,
-            "amount": amount,
-            "description": description,
-            "split": split,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-        if st.button("💸 Settle with Pi (Mock)"):
-           st.info("🚀 Pi Payment initiated (mock). You can replace this with actual Pi SDK callback using JS.")
+    st.markdown("### 💹 Expense Graph")
+    df = pd.DataFrame(st.session_state.expenses)
+    if not df.empty:
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df["amount"] = df["amount"].astype(float)
+        df = df.sort_values("timestamp")
+        df.set_index("timestamp")[["amount"]].plot(kind="bar", figsize=(10,4), title="Monthly Spending")
+        st.pyplot()
 
-        st.session_state.groups[selected_group]["expenses"].append(expense)
-        st.success("Expense added!")
+# 2. Friends
+elif page == "Friends":
+    st.title("👥 Friends")
+    st.markdown("### Total with Each Friend")
 
-        
+    net_balances = {f: 0 for f in st.session_state.friends}
+    for exp in st.session_state.expenses:
+        for user, val in exp["split"].items():
+            net_balances[user] = net_balances.get(user, 0) + val
 
-    # Display Expenses
-    st.markdown("### 📄 Expense History")
-    for i, expense in enumerate(st.session_state.groups[selected_group]["expenses"], 1):
-        st.markdown(f"**{i}. {expense['description']} (₹{expense['amount']})** by {expense['payer']} – {expense['timestamp']}")
-        for user, val in expense["split"].items():
-            st.markdown(f"- {user}: ₹{val}")
+    for user in st.session_state.friends:
+        status = "gets back" if net_balances[user] > 0 else "owes"
+        st.markdown(f"- **{user}** {status} ₹{abs(net_balances[user]):.2f}")
 
-    # Calculate Balance
-    st.markdown("### 💰 Net Balances")
-    balances = {m: 0.0 for m in st.session_state.groups[selected_group]["members"]}
-    for exp in st.session_state.groups[selected_group]["expenses"]:
-        for m, v in exp["split"].items():
-            balances[m] += v
+# 3. Activity
+elif page == "Activity":
+    st.title("📜 Activity Log")
+    st.markdown("### Filter transactions by friend or date")
 
-    for m, b in balances.items():
-        status = "gets back" if b > 0 else "owes"
-        st.markdown(f"- **{m}** {status} ₹{abs(round(b, 2))}")
+    df = pd.DataFrame(st.session_state.expenses)
+    if not df.empty:
+        friend_filter = st.selectbox("Filter by friend", ["All"] + st.session_state.friends)
+        date_filter = st.date_input("Date", value=datetime.today())
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        if friend_filter != "All":
+            df = df[df["payer"] == friend_filter]
+        df = df[df["timestamp"].dt.date == date_filter]
+        st.write(df)
 
-# Future: Add Pi SDK Simulation
-st.markdown("---")
-st.markdown("👨‍💻 _Phase 6_: Pi Coin payment integration coming soon...")
+# 4. Profile
+elif page == "Profile":
+    st.title("🙋 Profile")
+    profile = st.session_state.profile
+    st.image(profile["photo"], width=100)
+    st.write(f"**Name:** {profile['name']}")
+    st.write(f"**Email:** {profile['email']}")
+    st.write(f"**Authentication Type:** {profile['auth_type']}")
+    st.checkbox("Enable Notifications", value=profile["notifications"])
+
+with open("app.py", "w") as f:
+    f.write("""<PASTE FULL CODE HERE>""")
+
+from pyngrok import ngrok
+!streamlit run app.py &>/content/log.txt &
+print(ngrok.connect(8501))
+
